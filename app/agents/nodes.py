@@ -18,7 +18,7 @@ lets the system answer partially instead of not at all.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
@@ -180,8 +180,11 @@ async def supervisor(state: AgentState, settings: Settings) -> Command[str]:
     model = get_model(ModelRole.AGENT, settings.gemini).with_structured_output(SupervisorPlan)
 
     try:
-        decision = await model.ainvoke(
-            [SystemMessage(content=SUPERVISOR_SYSTEM), HumanMessage(content=question)]
+        decision = cast(
+            SupervisorPlan,
+            await model.ainvoke(
+                [SystemMessage(content=SUPERVISOR_SYSTEM), HumanMessage(content=question)]
+            ),
         )
     except Exception as exc:  # routing failure must not end the turn
         log.warning("supervisor_failed", error_type=type(exc).__name__)
@@ -254,8 +257,11 @@ async def retrieval_agent(
     search_plan = SearchPlan(query=question)
     try:
         planner = get_model(ModelRole.AGENT, settings.gemini).with_structured_output(SearchPlan)
-        search_plan = await planner.ainvoke(
-            [SystemMessage(content=RETRIEVAL_QUERY_SYSTEM), HumanMessage(content=question)]
+        search_plan = cast(
+            SearchPlan,
+            await planner.ainvoke(
+                [SystemMessage(content=RETRIEVAL_QUERY_SYSTEM), HumanMessage(content=question)]
+            ),
         )
         events.retrieval_stage(
             "retrieval_agent", "query_understanding", count=1, query=search_plan.query[:120]

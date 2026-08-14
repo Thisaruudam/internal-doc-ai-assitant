@@ -18,7 +18,7 @@ with an explicit "insufficient evidence" rather than an unsupported answer.
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -32,12 +32,12 @@ from app.retrieval.hybrid import HybridRetriever
 log = get_logger(__name__)
 
 
-def _after_guard(state: AgentState) -> Literal["refusal", "supervisor"]:
+def _after_guard(state: AgentState) -> str:
     risk: RiskAssessment = state.get("risk") or RiskAssessment()
     return "refusal" if risk.blocked else "supervisor"
 
 
-def _after_validator(state: AgentState) -> Literal["response_agent", "__end__"]:
+def _after_validator(state: AgentState) -> str:
     """Repair or finish.
 
     Driven by an explicit ``route`` the validator sets, not by the presence of a
