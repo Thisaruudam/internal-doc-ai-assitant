@@ -63,12 +63,17 @@ def main() -> int:
                 "  hybrid search.\n"
             )
         else:
+            import asyncio
+
             from app.retrieval.pinecone_store import PineconeStore
 
             store = PineconeStore(settings.pinecone, settings.gemini)
+            print("  Provisioning Pinecone indexes (may take a minute on first run)...")
             store.ensure_indexes()
-            upserted = store.upsert_chunks(chunks)
+            upserted = asyncio.run(store.upsert_chunks(chunks))
             print(f"  Pinecone: upserted {upserted} chunks across both indexes")
+            for name, stats in store.describe().items():
+                print(f"    {name}: {stats.get('total_vector_count', '?')} vectors")
 
     print()
     return 0

@@ -23,7 +23,14 @@ class GeminiSettings(BaseSettings):
     quality dominates token cost. See ``docs/adr/0001-llm-selection.md``.
     """
 
-    model_config = SettingsConfigDict(env_prefix="GEMINI_")
+    model_config = SettingsConfigDict(
+        env_prefix="GEMINI_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     api_key: SecretStr
 
@@ -55,7 +62,14 @@ class PineconeSettings(BaseSettings):
     fusion step stay explicit and inspectable. See ``docs/adr/0002-hybrid-retrieval.md``.
     """
 
-    model_config = SettingsConfigDict(env_prefix="PINECONE_")
+    model_config = SettingsConfigDict(
+        env_prefix="PINECONE_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     api_key: SecretStr
 
@@ -80,7 +94,14 @@ class PineconeSettings(BaseSettings):
 
 
 class SecuritySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="SECURITY_")
+    model_config = SettingsConfigDict(
+        env_prefix="SECURITY_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     #: HS256 signing key. Generated per-deployment; the committed default is a
     #: placeholder that ``Settings.validate_production`` rejects outside dev.
@@ -105,7 +126,14 @@ class RateLimitSettings(BaseSettings):
     administrator is not throttled like an anonymous viewer.
     """
 
-    model_config = SettingsConfigDict(env_prefix="RATELIMIT_")
+    model_config = SettingsConfigDict(
+        env_prefix="RATELIMIT_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     enabled: bool = True
 
@@ -129,7 +157,14 @@ class GraphSettings(BaseSettings):
     ``docs/architecture.md`` section 3.
     """
 
-    model_config = SettingsConfigDict(env_prefix="GRAPH_")
+    model_config = SettingsConfigDict(
+        env_prefix="GRAPH_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     #: Supervisor dispatch rounds before the graph must compose an answer.
     max_supervisor_steps: int = 8
@@ -156,7 +191,14 @@ class GraphSettings(BaseSettings):
 
 
 class ObservabilitySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="OBSERVABILITY_")
+    model_config = SettingsConfigDict(
+        env_prefix="OBSERVABILITY_",
+        # Nested settings do not inherit the parent's env_file, so each
+        # group loads it directly. Without this, values set only in .env
+        # resolve in tests (which export real env vars) and fail at runtime.
+        env_file=".env",
+        extra="ignore",
+    )
 
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "atrium"
