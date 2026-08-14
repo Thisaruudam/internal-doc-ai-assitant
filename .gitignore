@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment — never commit real credentials
+.env
+.env.local
+*.pem
+
+# Generated data
+data/corpus/*.md
+data/bm25_index/
+!data/corpus/.gitkeep
+
+# Local services
+postgres-data/
+redis-data/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
