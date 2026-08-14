@@ -41,6 +41,49 @@ def date_to_ts(value: date) -> int:
     return int(value.toordinal() * 86400)
 
 
+#: Phrasings a query rewriter reaches for, mapped to the corpus vocabulary.
+#: Models describe document kinds in natural language; the index stores enum
+#: values. Reconciling them here is cheaper and more predictable than prompting
+#: harder and hoping.
+_DOCUMENT_TYPE_ALIASES = {
+    "incident report": "incident",
+    "incident reports": "incident",
+    "incidents": "incident",
+    "outage report": "incident",
+    "postmortem": "incident",
+    # Keys are stored already normalised (hyphens folded to spaces), because
+    # lookup happens after normalisation.
+    "post mortem": "incident",
+    "runbooks": "runbook",
+    "playbook": "runbook",
+    "procedure": "runbook",
+    "policies": "policy",
+    "standard": "policy",
+    "architecture document": "architecture",
+    "design document": "architecture",
+    "design doc": "architecture",
+    "product specification": "product_spec",
+    "product spec": "product_spec",
+    "spec": "product_spec",
+    "meeting notes": "meeting_notes",
+    "minutes": "meeting_notes",
+    "notes": "meeting_notes",
+}
+
+
+def normalise_document_type(value: str) -> str | None:
+    """Map a model-supplied document type onto the corpus vocabulary."""
+    cleaned = value.strip().lower().replace("-", " ")
+    known = {d.value for d in DocumentType}
+
+    if cleaned in known:
+        return cleaned
+    underscored = cleaned.replace(" ", "_")
+    if underscored in known:
+        return underscored
+    return _DOCUMENT_TYPE_ALIASES.get(cleaned)
+
+
 def _intersect(permitted: set[str], requested: set[str] | None) -> set[str]:
     """Narrow ``permitted`` by ``requested``, never widen it.
 
@@ -100,14 +143,28 @@ def build_filter(
     }
 
     if document_types:
-        valid = {t for t in document_types if t in {d.value for d in DocumentType}}
+        valid = {
+            normalised
+            for raw in document_types
+            if (normalised := normalise_document_type(raw)) is not None
+        }
         if valid:
             metadata_filter["document_type"] = {"$in": sorted(valid)}
         else:
-            # Every requested type was unrecognised. Narrow to nothing rather
-            # than silently dropping the constraint and returning more than the
-            # caller asked for.
-            metadata_filter["document_type"] = {"$in": []}
+            # Dropped, not narrowed to nothing — and the distinction matters.
+            #
+            # `access_level` and `department` are *security* constraints, so an
+            # uninterpretable value must never widen them. `document_type` is a
+            # *relevance hint*: dropping it returns a superset of what was asked
+            # for, but every document in that superset is still inside the
+            # caller's access scope, because the security clauses above are
+            # unaffected.
+            #
+            # Treating it as a security constraint was actively harmful: a query
+            # rewriter that said "incident report" instead of "incident" made the
+            # whole filter match nothing, and the assistant answered a perfectly
+            # legitimate question with "insufficient evidence".
+            log.info("unrecognised_document_types_dropped", requested=sorted(document_types))
 
     if tags:
         metadata_filter["tags"] = {"$in": sorted(tags)}

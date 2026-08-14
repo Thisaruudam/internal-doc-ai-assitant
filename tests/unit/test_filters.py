@@ -18,6 +18,7 @@ from app.retrieval.filters import (
     build_filter,
     date_to_ts,
     matches_nothing,
+    normalise_document_type,
     permitted_departments,
 )
 from app.retrieval.schema import Department
@@ -88,11 +89,45 @@ class TestCannotBeWidened:
         # The tag is just a tag; the access clause is untouched by it.
         assert result["access_level"]["$in"] == ["public", "internal"]
 
-    def test_unknown_document_types_narrow_rather_than_drop(self) -> None:
-        """Dropping an unrecognised constraint would return more than asked."""
+    def test_unknown_document_types_are_dropped_not_narrowed_to_nothing(self) -> None:
+        """document_type is a relevance hint, not a security constraint.
+
+        Dropping it returns a superset of what was asked for, but every document
+        in that superset is still inside the caller's access scope because the
+        security clauses are untouched. Treating it as a security constraint made
+        a query rewriter saying "incident report" collapse the filter to nothing.
+        """
         result = build_filter(make(Role.ADMINISTRATOR), document_types={"not_a_real_type"})
-        assert result["document_type"]["$in"] == []
-        assert matches_nothing(result)
+        assert "document_type" not in result
+        assert not matches_nothing(result)
+        assert result["access_level"]["$in"] == [
+            "public",
+            "internal",
+            "confidential",
+            "restricted",
+        ]
+
+    @pytest.mark.parametrize(
+        ("supplied", "expected"),
+        [
+            ("incident report", "incident"),
+            ("Incident Reports", "incident"),
+            ("post-mortem", "incident"),
+            ("runbooks", "runbook"),
+            ("meeting notes", "meeting_notes"),
+            ("product spec", "product_spec"),
+            ("policy", "policy"),
+            ("nonsense", None),
+        ],
+    )
+    def test_document_type_aliases_are_normalised(
+        self, supplied: str, expected: str | None
+    ) -> None:
+        assert normalise_document_type(supplied) == expected
+
+    def test_a_mix_of_valid_and_invalid_types_keeps_the_valid_ones(self) -> None:
+        result = build_filter(make(Role.ANALYST), document_types={"incident report", "gibberish"})
+        assert result["document_type"]["$in"] == ["incident"]
 
     def test_empty_narrowing_arguments_leave_authorization_intact(self) -> None:
         result = build_filter(make(Role.VIEWER), departments=set(), document_types=set())
