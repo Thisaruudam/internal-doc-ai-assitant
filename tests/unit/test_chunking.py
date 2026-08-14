@@ -190,10 +190,7 @@ class TestOversizedSections:
         chunks = chunk_document(make_document(f"# Doc\n\n## Big\n\n{paragraphs}"))
         assert len(chunks) > 1
         # Overlap means adjacent chunks share some paragraph text.
-        assert any(
-            set(a.text.split()) & set(b.text.split())
-            for a, b in itertools.pairwise(chunks)
-        )
+        assert any(set(a.text.split()) & set(b.text.split()) for a, b in itertools.pairwise(chunks))
 
     def test_every_section_survives_chunking(self) -> None:
         chunks = chunk_document(make_document(INCIDENT_BODY))
