@@ -2,24 +2,42 @@
 
 The whole app is assembled in one readable function so a reviewer can see the
 middleware order, which is security-relevant: correlation binding must wrap
-everything (so failures are traceable), and authentication must run before rate
-limiting (so buckets are per-user rather than per-IP).
+everything (so failures are traceable), and authentication must resolve before
+rate limiting (so buckets are per-user rather than per-IP).
+
+Expensive, long-lived objects — the Pinecone connection pool, the BM25 index,
+the compiled graph — are built once in the lifespan and held on ``app.state``.
+Building them per request would add a TLS handshake and an index load to every
+question asked.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.api.errors import register_exception_handlers
 from app.api.middleware.correlation import CorrelationIdMiddleware
-from app.api.routes import auth, health
+from app.api.middleware.ratelimit import TokenBucketLimiter
+from app.api.routes import auth, chat, health
 from app.config import Settings, get_settings
+from app.graph.build import build_graph
+from app.observability.langsmith import configure_tracing
 from app.observability.logging import configure_logging, get_logger
+from app.retrieval.bm25_store import load_or_none
+from app.retrieval.hybrid import HybridRetriever
+from app.retrieval.pinecone_store import AsyncPineconeSearch
 
 log = get_logger(__name__)
+
+_PLACEHOLDER_KEYS = {"", "test-key-not-used", "your-key-here"}
+
+
+def _pinecone_configured(settings: Settings) -> bool:
+    return settings.pinecone.api_key.get_secret_value() not in _PLACEHOLDER_KEYS
 
 
 @asynccontextmanager
@@ -32,14 +50,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings: Settings = get_settings()
     settings.validate_production()
+    tracing = configure_tracing(settings.observability)
 
-    log.info(
-        "api_starting",
-        environment=settings.environment,
-        organization=settings.organization_name,
-        tracing=settings.observability.langsmith_tracing,
-    )
-    yield
+    async with AsyncExitStack() as stack:
+        search = None
+        if _pinecone_configured(settings):
+            search = await stack.enter_async_context(
+                AsyncPineconeSearch(settings.pinecone, settings.gemini)
+            )
+        else:
+            # Not fatal. The BM25 index still answers questions, which is the
+            # bottom rung of the degradation ladder rather than an outage.
+            log.warning("pinecone_not_configured", detail="serving from the local index only")
+
+        bm25 = load_or_none(settings.bm25_index_dir)
+        if bm25 is None:
+            log.warning("bm25_index_missing", detail="run `make seed` to build the fallback")
+
+        retriever = HybridRetriever(
+            search,
+            bm25=bm25,
+            rrf_k=settings.pinecone.rrf_k,
+            alpha=settings.pinecone.hybrid_alpha,
+            top_k_per_retriever=settings.pinecone.top_k_per_retriever,
+            top_k_final=settings.pinecone.top_k_final,
+        )
+
+        app.state.settings = settings
+        app.state.retriever = retriever
+        app.state.limiter = TokenBucketLimiter(settings.ratelimit)
+        # In-memory checkpointing keeps session memory working without Postgres.
+        # AsyncPostgresSaver is the durable swap and needs only this line changed.
+        app.state.graph = build_graph(settings, retriever, checkpointer=InMemorySaver())
+
+        log.info(
+            "api_starting",
+            environment=settings.environment,
+            organization=settings.organization_name,
+            tracing=tracing,
+            pinecone=search is not None,
+            bm25_fallback=bm25 is not None,
+        )
+        yield
+
     log.info("api_stopped")
 
 
@@ -70,6 +123,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(chat.router)
 
     return app
 
