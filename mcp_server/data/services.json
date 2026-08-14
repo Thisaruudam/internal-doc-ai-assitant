@@ -1,0 +1,142 @@
+[
+  {
+    "service_name": "settlement-service",
+    "department": "payments",
+    "tier": 1,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "core-ledger",
+      "card-processor-bridge"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "authorization-gateway",
+    "department": "payments",
+    "tier": 1,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "iso8583-adapter",
+      "fraud-scoring"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "card-processor-bridge",
+    "department": "payments",
+    "tier": 1,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "card-network-link"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "payment-orchestrator",
+    "department": "payments",
+    "tier": 2,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "settlement-service",
+      "authorization-gateway"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.9%"
+  },
+  {
+    "service_name": "iso8583-adapter",
+    "department": "payments",
+    "tier": 1,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "card-network-link"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "reconciliation-engine",
+    "department": "payments",
+    "tier": 2,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [
+      "core-ledger",
+      "settlement-service"
+    ],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.9%"
+  },
+  {
+    "service_name": "core-ledger",
+    "department": "platform",
+    "tier": 1,
+    "owner_team": "Core Platform Engineering",
+    "dependencies": [],
+    "runbook": "RB-PLA-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "identity-platform",
+    "department": "platform",
+    "tier": 1,
+    "owner_team": "Core Platform Engineering",
+    "dependencies": [],
+    "runbook": "RB-PLA-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "event-backbone",
+    "department": "platform",
+    "tier": 1,
+    "owner_team": "Core Platform Engineering",
+    "dependencies": [],
+    "runbook": "RB-PLA-001",
+    "sla_availability": "99.95%"
+  },
+  {
+    "service_name": "observability-pipeline",
+    "department": "platform",
+    "tier": 3,
+    "owner_team": "Core Platform Engineering",
+    "dependencies": [
+      "event-backbone"
+    ],
+    "runbook": "RB-PLA-001",
+    "sla_availability": "99.5%"
+  },
+  {
+    "service_name": "data-platform",
+    "department": "platform",
+    "tier": 3,
+    "owner_team": "Core Platform Engineering",
+    "dependencies": [
+      "event-backbone",
+      "core-ledger"
+    ],
+    "runbook": "RB-PLA-001",
+    "sla_availability": "99.5%"
+  },
+  {
+    "service_name": "fraud-scoring",
+    "department": "security",
+    "tier": 2,
+    "owner_team": "Information Security",
+    "dependencies": [
+      "data-platform"
+    ],
+    "runbook": "RB-SEC-001",
+    "sla_availability": "99.9%"
+  },
+  {
+    "service_name": "card-network-link",
+    "department": "payments",
+    "tier": 1,
+    "owner_team": "Payments Platform Team",
+    "dependencies": [],
+    "runbook": "RB-PAY-001",
+    "sla_availability": "99.95%"
+  }
+]

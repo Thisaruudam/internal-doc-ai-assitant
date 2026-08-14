@@ -57,8 +57,12 @@ check: lint types test ## Everything CI would run
 corpus: ## Generate the synthetic document corpus
 	$(UV) run python scripts/generate_corpus.py
 
+.PHONY: mcp-data
+mcp-data: corpus ## Generate the MCP server's enterprise data from the corpus
+	$(UV) run python scripts/generate_mcp_data.py
+
 .PHONY: seed
-seed: corpus ## Generate the corpus and index it into Pinecone + local BM25
+seed: corpus mcp-data ## Generate all data and index it into Pinecone + local BM25
 	$(UV) run python scripts/index_corpus.py
 
 # ── Compose ──────────────────────────────────────────────────────────────
