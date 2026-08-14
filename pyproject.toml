@@ -86,6 +86,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]  # hardcoded test credentials are intentional
+# The injection detector and its tests deliberately contain homoglyphs,
+# zero-width characters, and full-width forms: they are the attack being
+# detected. RUF001-003 flag exactly the input this code exists to handle.
+"app/security/injection.py" = ["RUF001", "RUF002", "RUF003"]
+"app/security/quarantine.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/security/test_injection.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
