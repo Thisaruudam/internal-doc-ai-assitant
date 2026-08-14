@@ -1,0 +1,40 @@
+# Demo user directory — specification Option A (hardcoded users and roles).
+#
+# These are local demonstration credentials for an assessment build. They are
+# documented in the README because an evaluator needs to sign in as each role to
+# see the authorization boundaries. A real deployment would swap this loader for
+# an OIDC provider without touching anything downstream: every authorization
+# decision is made from the Principal, not from this file.
+#
+# Passwords are bcrypt (cost 12). Regenerate with:
+#     uv run python scripts/hash_password.py "new-password"
+
+users:
+  # ── Viewer ───────────────────────────────────────────────────────────────
+  # Chat and knowledge search only. Access ceiling: internal.
+  # Cannot reach confidential incident detail, analytics, MCP, or admin tools.
+  - user_id: viewer
+    display_name: Nimali Perera
+    role: viewer
+    departments: ["*"]
+    password_hash: "$2b$12$8nenT5MeQiv2laWM..bfleoQDrmsnNeAZQQaZfeHwJY4X6M/UD2ZC"
+
+  # ── Analyst ──────────────────────────────────────────────────────────────
+  # Adds analytics and MCP tools. Access ceiling: confidential.
+  # Scoped to two departments — proves department filtering independently of
+  # the access-level lattice.
+  - user_id: analyst
+    display_name: Dilan Fernando
+    role: analyst
+    departments: ["payments", "platform"]
+    password_hash: "$2b$12$3zzPAz85VfCyPXncUu3pIe0tc9JSqjWtiTcMFNsipv5/3zprwksqW"
+
+  # ── Administrator ────────────────────────────────────────────────────────
+  # All tools, all departments. Access ceiling: restricted.
+  # High-risk tools still route through human approval — seniority does not
+  # bypass the HITL gate.
+  - user_id: admin
+    display_name: Ruwan Jayasinghe
+    role: administrator
+    departments: ["*"]
+    password_hash: "$2b$12$cZsBm8AEuJV/Q1S7QheMv.seh5xdC1SiLT8IqouWDtyA62ZQC1qcq"
