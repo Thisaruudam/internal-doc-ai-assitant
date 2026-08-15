@@ -25,6 +25,7 @@ from app.api.middleware.ratelimit import TokenBucketLimiter
 from app.api.routes import auth, chat, health
 from app.config import Settings, get_settings
 from app.graph.build import build_graph
+from app.memory.longterm import LongTermMemory
 from app.observability.langsmith import configure_tracing
 from app.observability.logging import configure_logging, get_logger
 from app.retrieval.bm25_store import load_or_none
@@ -101,6 +102,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.retriever = retriever
         app.state.registry = registry
         app.state.tool_guard = tool_guard
+        # One store for the process, so facts survive between a user's turns.
+        # LangGraph's Postgres-backed Store is the durable swap.
+        app.state.memory = LongTermMemory()
         app.state.limiter = TokenBucketLimiter(settings.ratelimit)
         # In-memory checkpointing keeps session memory working without Postgres.
         # AsyncPostgresSaver is the durable swap and needs only this line changed.
@@ -110,6 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             checkpointer=InMemorySaver(),
             corpus_chunks=corpus_chunks,
             tool_guard=tool_guard,
+            memory=app.state.memory,
         )
 
         log.info(

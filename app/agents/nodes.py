@@ -409,6 +409,12 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
             + source
         )
 
+    recalled = (files.get("memory.md") or "").strip()
+    if recalled:
+        # Placed before the evidence and labelled as context: memory explains
+        # what the user means, but it is not a source and must not be cited.
+        source = recalled + "\n\n" + source
+
     prompt_parts = [evidence_preamble(), "", source, "", f"Question: {question}"]
     if repair_note:
         prompt_parts += ["", "Your previous draft had these problems:", repair_note]

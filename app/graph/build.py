@@ -24,10 +24,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents import nodes
+from app.agents.memory_nodes import memory_load, memory_write
 from app.agents.research import research_agent
 from app.agents.specialists import analysis_agent, mcp_agent
 from app.config import Settings
 from app.graph.state import AgentState, RiskAssessment
+from app.memory.longterm import LongTermMemory
 from app.observability.logging import get_logger
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.schema import Chunk
@@ -38,7 +40,7 @@ log = get_logger(__name__)
 
 def _after_guard(state: AgentState) -> str:
     risk: RiskAssessment = state.get("risk") or RiskAssessment()
-    return "refusal" if risk.blocked else "supervisor"
+    return "refusal" if risk.blocked else "memory_load"
 
 
 def _after_validator(state: AgentState) -> str:
@@ -52,7 +54,7 @@ def _after_validator(state: AgentState) -> str:
     """
     if state.get("route") == "repair":
         return "response_agent"
-    return END
+    return "memory_write"
 
 
 def build_graph(
@@ -62,6 +64,7 @@ def build_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     corpus_chunks: list[Chunk] | None = None,
     tool_guard: ToolGuard | None = None,
+    memory: LongTermMemory | None = None,
 ) -> Any:
     """Compile the agent graph.
 
@@ -73,6 +76,9 @@ def build_graph(
 
     graph.add_node("ingress_guard", partial(nodes.ingress_guard, settings=settings))
     graph.add_node("refusal", nodes.refusal)
+    store = memory or LongTermMemory()
+    graph.add_node("memory_load", partial(memory_load, settings=settings, memory=store))
+    graph.add_node("memory_write", partial(memory_write, settings=settings, memory=store))
     graph.add_node("supervisor", partial(nodes.supervisor, settings=settings))
     graph.add_node(
         "retrieval_agent",
@@ -97,8 +103,9 @@ def build_graph(
 
     graph.add_edge(START, "ingress_guard")
     graph.add_conditional_edges(
-        "ingress_guard", _after_guard, {"refusal": "refusal", "supervisor": "supervisor"}
+        "ingress_guard", _after_guard, {"refusal": "refusal", "memory_load": "memory_load"}
     )
+    graph.add_edge("memory_load", "supervisor")
     graph.add_edge("refusal", END)
 
     # The supervisor returns a Command naming its own destination, so its edges
@@ -111,8 +118,11 @@ def build_graph(
         graph.add_edge("mcp_agent", "response_agent")
     graph.add_edge("response_agent", "validator")
     graph.add_conditional_edges(
-        "validator", _after_validator, {"response_agent": "response_agent", END: END}
+        "validator",
+        _after_validator,
+        {"response_agent": "response_agent", "memory_write": "memory_write"},
     )
+    graph.add_edge("memory_write", END)
 
     compiled = graph.compile(checkpointer=checkpointer, name="atrium")
     log.info("graph_compiled", nodes=len(graph.nodes), checkpointed=checkpointer is not None)
@@ -126,7 +136,8 @@ def graph_topology() -> dict[str, list[str]]:
     drift from the graph that actually runs.
     """
     return {
-        "ingress_guard": ["refusal", "supervisor"],
+        "ingress_guard": ["refusal", "memory_load"],
+        "memory_load": ["supervisor"],
         "refusal": [END],
         "supervisor": [
             "retrieval_agent",
@@ -140,5 +151,6 @@ def graph_topology() -> dict[str, list[str]]:
         "analysis_agent": ["response_agent"],
         "mcp_agent": ["response_agent"],
         "response_agent": ["validator"],
-        "validator": ["response_agent", END],
+        "validator": ["response_agent", "memory_write"],
+        "memory_write": [END],
     }
