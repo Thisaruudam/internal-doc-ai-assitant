@@ -25,11 +25,13 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agents import nodes
 from app.agents.research import research_agent
+from app.agents.specialists import analysis_agent, mcp_agent
 from app.config import Settings
 from app.graph.state import AgentState, RiskAssessment
 from app.observability.logging import get_logger
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.schema import Chunk
+from app.tools.guard import ToolGuard
 
 log = get_logger(__name__)
 
@@ -59,6 +61,7 @@ def build_graph(
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     corpus_chunks: list[Chunk] | None = None,
+    tool_guard: ToolGuard | None = None,
 ) -> Any:
     """Compile the agent graph.
 
@@ -79,8 +82,18 @@ def build_graph(
         "research_agent",
         partial(research_agent, settings=settings, all_chunks=corpus_chunks or []),
     )
+    if tool_guard is not None:
+        graph.add_node(
+            "analysis_agent", partial(analysis_agent, settings=settings, guard=tool_guard)
+        )
+        graph.add_node("mcp_agent", partial(mcp_agent, settings=settings, guard=tool_guard))
     graph.add_node("response_agent", partial(nodes.response_agent, settings=settings))
     graph.add_node("validator", partial(nodes.validator, settings=settings))
+
+    routable = {"retrieval_agent", "research_agent"}
+    if tool_guard is not None:
+        routable |= {"analysis_agent", "mcp_agent"}
+    nodes.set_routable(routable)
 
     graph.add_edge(START, "ingress_guard")
     graph.add_conditional_edges(
@@ -93,6 +106,9 @@ def build_graph(
     # evaluated here.
     graph.add_edge("retrieval_agent", "response_agent")
     graph.add_edge("research_agent", "response_agent")
+    if tool_guard is not None:
+        graph.add_edge("analysis_agent", "response_agent")
+        graph.add_edge("mcp_agent", "response_agent")
     graph.add_edge("response_agent", "validator")
     graph.add_conditional_edges(
         "validator", _after_validator, {"response_agent": "response_agent", END: END}
@@ -112,9 +128,17 @@ def graph_topology() -> dict[str, list[str]]:
     return {
         "ingress_guard": ["refusal", "supervisor"],
         "refusal": [END],
-        "supervisor": ["retrieval_agent", "research_agent", "response_agent"],
+        "supervisor": [
+            "retrieval_agent",
+            "research_agent",
+            "analysis_agent",
+            "mcp_agent",
+            "response_agent",
+        ],
         "retrieval_agent": ["response_agent"],
         "research_agent": ["response_agent"],
+        "analysis_agent": ["response_agent"],
+        "mcp_agent": ["response_agent"],
         "response_agent": ["validator"],
         "validator": ["response_agent", END],
     }

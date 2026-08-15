@@ -28,8 +28,12 @@ from app.graph.build import build_graph
 from app.observability.langsmith import configure_tracing
 from app.observability.logging import configure_logging, get_logger
 from app.retrieval.bm25_store import load_or_none
+from app.retrieval.chunking import chunk_corpus
+from app.retrieval.corpus import CorpusError, load_documents
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.pinecone_store import AsyncPineconeSearch
+from app.tools.factory import build_mcp_client, build_registry
+from app.tools.guard import ToolGuard
 
 log = get_logger(__name__)
 
@@ -76,12 +80,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             top_k_final=settings.pinecone.top_k_final,
         )
 
+        # The corpus backs the research agent's manifest and the analysis
+        # tool's chunk lookup. Loaded once here rather than per turn.
+        try:
+            corpus_chunks = chunk_corpus(load_documents(settings.corpus_dir))
+        except CorpusError as exc:
+            log.warning("corpus_unavailable", detail=str(exc)[:200])
+            corpus_chunks = []
+
+        mcp_client = build_mcp_client(settings.mcp_server_url)
+        registry = build_registry(
+            retriever=retriever,
+            corpus={chunk.chunk_id: chunk for chunk in corpus_chunks},
+            mcp_client=mcp_client,
+            analysis_timeout_s=settings.graph.sandbox_timeout_s,
+        )
+        tool_guard = ToolGuard(registry)
+
         app.state.settings = settings
         app.state.retriever = retriever
+        app.state.registry = registry
+        app.state.tool_guard = tool_guard
         app.state.limiter = TokenBucketLimiter(settings.ratelimit)
         # In-memory checkpointing keeps session memory working without Postgres.
         # AsyncPostgresSaver is the durable swap and needs only this line changed.
-        app.state.graph = build_graph(settings, retriever, checkpointer=InMemorySaver())
+        app.state.graph = build_graph(
+            settings,
+            retriever,
+            checkpointer=InMemorySaver(),
+            corpus_chunks=corpus_chunks,
+            tool_guard=tool_guard,
+        )
 
         log.info(
             "api_starting",
@@ -90,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tracing=tracing,
             pinecone=search is not None,
             bm25_fallback=bm25 is not None,
+            corpus_chunks=len(corpus_chunks),
         )
         yield
 

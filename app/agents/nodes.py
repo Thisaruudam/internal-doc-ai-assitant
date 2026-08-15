@@ -153,6 +153,16 @@ class SupervisorPlan(BaseModel):
 
 _VALID_AGENTS = {"retrieval", "research", "analysis", "mcp"}
 
+#: Populated by the graph builder with the specialist nodes that exist in this
+#: deployment, so the supervisor cannot route somewhere unregistered.
+_ROUTABLE: set[str] = {"retrieval_agent", "research_agent"}
+
+
+def set_routable(destinations: set[str]) -> None:
+    """Declare which specialist nodes the supervisor may target."""
+    _ROUTABLE.clear()
+    _ROUTABLE.update(destinations)
+
 
 async def supervisor(state: AgentState, settings: Settings) -> Command[str]:
     """Decompose the turn and route to a specialist.
@@ -224,7 +234,12 @@ async def supervisor(state: AgentState, settings: Settings) -> Command[str]:
     steps[0].status = TodoStatus.IN_PROGRESS
     events.plan_update("supervisor", steps)
 
+    # Routing is model-produced, so it is checked against the nodes that were
+    # actually registered. A graph built without the tool guard has no analysis
+    # or MCP node, and routing to a missing node would fail the turn.
     destination = f"{steps[0].agent}_agent"
+    if destination not in _ROUTABLE:
+        destination = "retrieval_agent"
     events.node_exit("supervisor", route=destination, reasoning=decision.reasoning[:160])
 
     return Command(
@@ -338,8 +353,17 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
     principal = state["principal"]
     repair_note = (files.get("repair.md") or "").strip()
 
-    if not state.get("retrieved"):
-        events.node_exit("response_agent", reason="no evidence")
+    # Source material is whatever the specialists produced, which is not always
+    # retrieved chunks: the research agent leaves a synthesis, the analysis agent
+    # a computed result, the MCP agent structured records. Gating on `retrieved`
+    # alone made a successful enterprise lookup report "no evidence" — the same
+    # mistake, twice, so the check now names every artifact a specialist writes.
+    has_material = bool(state.get("retrieved")) or any(
+        (files.get(name) or "").strip()
+        for name in ("research.md", "evidence.md", "analysis.md", "enterprise.md")
+    )
+    if not has_material:
+        events.node_exit("response_agent", reason="no source material")
         return {
             "messages": [AIMessage(content=insufficient_evidence(principal.role.value))],
             "citations": [],
@@ -354,6 +378,8 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
     # discarded and the answer became "no evidence was provided".
     research = (files.get("research.md") or "").strip()
     evidence = (files.get("evidence.md") or "").strip()
+    computed = (files.get("analysis.md") or "").strip()
+    enterprise = (files.get("enterprise.md") or "").strip()
 
     if research:
         source = (
@@ -365,6 +391,23 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
             source += "\n\n" + evidence
     else:
         source = evidence
+
+    # Computed results are stated before the passages: a figure produced by code
+    # is more reliable than one the model would infer from prose, so it should
+    # anchor the answer rather than compete with it.
+    if computed:
+        source = (
+            "The following result was computed by running code over the "
+            "retrieved passages. Prefer it over any figure you would estimate "
+            "yourself.\n\n" + computed + "\n\n" + source
+        )
+    if enterprise:
+        source = (
+            "Structured enterprise records retrieved for this question:\n\n"
+            + enterprise
+            + "\n\n"
+            + source
+        )
 
     prompt_parts = [evidence_preamble(), "", source, "", f"Question: {question}"]
     if repair_note:
@@ -461,7 +504,12 @@ async def validator(state: AgentState, settings: Settings) -> dict[str, Any]:
     # unsupported figures remain failures in both modes — see the rationale in
     # app.security.grounding.check_grounding.
     files = state.get("files", {})
-    is_synthesis = bool((files.get("research.md") or "").strip())
+    # Aggregate mode also covers answers built from computed results or
+    # structured records: neither is a restatement of a passage, so neither can
+    # carry a per-sentence chunk citation.
+    is_synthesis = any(
+        (files.get(name) or "").strip() for name in ("research.md", "analysis.md", "enterprise.md")
+    )
     if is_synthesis:
         for name, text in files.items():
             if name.startswith("findings/"):

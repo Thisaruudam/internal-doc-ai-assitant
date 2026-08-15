@@ -144,20 +144,39 @@ def incident_records(
     rows.sort(key=lambda r: str(r["opened_date"]), reverse=True)
     capped = rows[: min(limit, _MAX_RESULTS)]
 
-    # A pre-computed rollup over the *whole* match, not just the returned page.
-    # Without it, an agent asking "which cause recurs most" would have to page
-    # through every record and count them in context — expensive and error-prone
-    # for a question the data source can answer directly.
+    # Rollups computed over the *whole* match, not just the returned page.
+    #
+    # Without these an agent asking "which service fails most" has to page
+    # through every record and count in context — expensive, error-prone, and
+    # unanswerable when the page is truncated. Observed in practice: with only a
+    # page of 25 of 46 rows, the model correctly refused to answer rather than
+    # guess, which is honest but useless. A GROUP BY belongs in the data source.
     by_cause: dict[str, int] = {}
+    by_service: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    total_minutes = 0
+
     for row in rows:
         cause = str(row["root_cause_category"])
+        service = str(row["service"])
+        severity = str(row["severity"])
         by_cause[cause] = by_cause.get(cause, 0) + 1
+        by_service[service] = by_service.get(service, 0) + 1
+        by_severity[severity] = by_severity.get(severity, 0) + 1
+        total_minutes += int(row.get("duration_minutes") or 0)
+
+    def ranked(counts: dict[str, int]) -> dict[str, int]:
+        return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
     return {
         "count": len(capped),
         "total_matched": len(rows),
         "incidents": capped,
-        "root_cause_summary": dict(sorted(by_cause.items(), key=lambda kv: -kv[1])),
+        "root_cause_summary": ranked(by_cause),
+        "service_summary": ranked(by_service),
+        "severity_summary": ranked(by_severity),
+        "total_outage_minutes": total_minutes,
+        "summaries_cover": "all matched incidents, not only the returned page",
     }
 
 
