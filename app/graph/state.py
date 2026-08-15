@@ -181,8 +181,11 @@ class AgentState(TypedDict, total=False):
     files: Annotated[dict[str, str], merge_files]
 
     # Retrieval results for this turn, and the citations derived from them.
-    retrieved: list[Any]
-    citations: list[Any]
+    # Always ScoredChunk, whichever specialist produced them: the validator and
+    # response agent read one shape. Annotated loosely to avoid a circular
+    # import between graph state and the retrieval schema.
+    retrieved: list[Any]  # list[ScoredChunk]
+    citations: list[Any]  # list[Citation]
 
     # Security and accounting.
     risk: RiskAssessment

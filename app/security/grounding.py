@@ -37,7 +37,16 @@ log = get_logger(__name__)
 
 #: Citations are written as [DOC-ID#000]. Bracketed rather than footnoted so
 #: they survive markdown rendering and are trivially machine-checkable.
-CITATION = re.compile(r"\[([A-Za-z0-9][\w.\-]*#\d{1,4})\]")
+#:
+#: A bracket may carry several ids — [A#001, B#002] — which models produce
+#: naturally when one claim rests on many passages, and which a synthesis over
+#: dozens of documents produces constantly. Matching only single-id brackets
+#: silently extracted nothing from exactly those answers, so the citation list
+#: came back empty while the text was full of them.
+_CITATION_BRACKET = re.compile(
+    r"\[([A-Za-z0-9][\w.\-]*#\d{1,4}(?:\s*,\s*[A-Za-z0-9][\w.\-]*#\d{1,4})*)\]"
+)
+CITATION = _CITATION_BRACKET
 
 #: Sentence splitter. Deliberately simple — abbreviations and decimals are
 #: handled by requiring a following capital or end-of-string, which is enough
@@ -153,8 +162,11 @@ class GroundingReport:
 
 
 def extract_citations(text: str) -> list[str]:
-    """Every ``[chunk_id]`` marker in order of appearance."""
-    return CITATION.findall(text)
+    """Every cited chunk id, in order, flattening multi-id brackets."""
+    ids: list[str] = []
+    for bracket in _CITATION_BRACKET.findall(text):
+        ids.extend(part.strip() for part in bracket.split(",") if part.strip())
+    return ids
 
 
 def _significant_terms(text: str) -> set[str]:
@@ -192,12 +204,29 @@ def check_grounding(
     *,
     retrieved_chunks: dict[str, str],
     minimum_term_overlap: float = 0.12,
+    require_citation_per_claim: bool = True,
 ) -> GroundingReport:
     """Validate an answer against the evidence that was actually retrieved.
 
     ``retrieved_chunks`` maps ``chunk_id`` to that chunk's text. It is built from
     the retrieval result, not from the answer, so the model cannot expand its own
     permitted citation set.
+
+    ``require_citation_per_claim`` exists because the rule is right for a
+    retrieval answer and structurally wrong for an aggregate one.
+
+    A retrieval answer restates what a passage says, so every claim maps to a
+    passage. A synthesis produced by the research agent makes claims *about the
+    set* — "connection pool exhaustion caused eight of these incidents" is true
+    of the corpus and appears verbatim in none of it. Demanding a per-sentence
+    citation there fails correct answers, which is worse than useless: it trains
+    the system to reject exactly the questions the RLM exists to answer.
+
+    What is never relaxed: a citation to a passage that was not retrieved is
+    still fatal, and a figure that appears nowhere in the cited evidence is still
+    a failure. Synthesis answers are checked against the batch findings they were
+    reduced from, and those findings were themselves checked against chunks when
+    each batch was read — so the chain to source is preserved, one link longer.
     """
     report = GroundingReport()
 
@@ -229,6 +258,27 @@ def check_grounding(
 
         # ── Check 3: uncited claim ──────────────────────────────────────
         if not citations:
+            if not require_citation_per_claim:
+                # Aggregate mode: the claim is a statement about the evidence
+                # set, checked below against the union of it rather than against
+                # one passage.
+                supporting_text = " ".join(retrieved_chunks.values())
+                missing = _numbers_in(CITATION.sub(" ", sentence)) - _numbers_in(supporting_text)
+                if missing:
+                    report.issues.append(
+                        ClaimIssue(
+                            kind="unsupported_number",
+                            sentence=sentence,
+                            detail=(
+                                f"the figure(s) {', '.join(sorted(missing))} appear "
+                                "nowhere in the evidence"
+                            ),
+                        )
+                    )
+                else:
+                    report.grounded_claims += 1
+                continue
+
             report.issues.append(
                 ClaimIssue(
                     kind="uncited_claim",

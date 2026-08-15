@@ -24,10 +24,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents import nodes
+from app.agents.research import research_agent
 from app.config import Settings
 from app.graph.state import AgentState, RiskAssessment
 from app.observability.logging import get_logger
 from app.retrieval.hybrid import HybridRetriever
+from app.retrieval.schema import Chunk
 
 log = get_logger(__name__)
 
@@ -56,8 +58,14 @@ def build_graph(
     retriever: HybridRetriever,
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    corpus_chunks: list[Chunk] | None = None,
 ) -> Any:
-    """Compile the agent graph."""
+    """Compile the agent graph.
+
+    ``corpus_chunks`` backs the research agent's manifest. It is injected rather
+    than loaded here so the graph stays constructible in tests without a corpus
+    on disk, and so the API loads it once at startup rather than per turn.
+    """
     graph = StateGraph(AgentState)
 
     graph.add_node("ingress_guard", partial(nodes.ingress_guard, settings=settings))
@@ -66,6 +74,10 @@ def build_graph(
     graph.add_node(
         "retrieval_agent",
         partial(nodes.retrieval_agent, settings=settings, retriever=retriever),
+    )
+    graph.add_node(
+        "research_agent",
+        partial(research_agent, settings=settings, all_chunks=corpus_chunks or []),
     )
     graph.add_node("response_agent", partial(nodes.response_agent, settings=settings))
     graph.add_node("validator", partial(nodes.validator, settings=settings))
@@ -80,6 +92,7 @@ def build_graph(
     # are declared as the set of places it may go rather than as a condition
     # evaluated here.
     graph.add_edge("retrieval_agent", "response_agent")
+    graph.add_edge("research_agent", "response_agent")
     graph.add_edge("response_agent", "validator")
     graph.add_conditional_edges(
         "validator", _after_validator, {"response_agent": "response_agent", END: END}
@@ -99,8 +112,9 @@ def graph_topology() -> dict[str, list[str]]:
     return {
         "ingress_guard": ["refusal", "supervisor"],
         "refusal": [END],
-        "supervisor": ["retrieval_agent", "response_agent"],
+        "supervisor": ["retrieval_agent", "research_agent", "response_agent"],
         "retrieval_agent": ["response_agent"],
+        "research_agent": ["response_agent"],
         "response_agent": ["validator"],
         "validator": ["response_agent", END],
     }

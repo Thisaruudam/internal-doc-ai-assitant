@@ -334,9 +334,9 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
     events.node_enter("response_agent")
 
     question = _last_user_question(state)
-    evidence = state.get("files", {}).get("evidence.md", "")
+    files = state.get("files", {})
     principal = state["principal"]
-    repair_note = (state.get("files", {}).get("repair.md") or "").strip()
+    repair_note = (files.get("repair.md") or "").strip()
 
     if not state.get("retrieved"):
         events.node_exit("response_agent", reason="no evidence")
@@ -345,7 +345,28 @@ async def response_agent(state: AgentState, settings: Settings) -> dict[str, Any
             "citations": [],
         }
 
-    prompt_parts = [evidence_preamble(), "", evidence, "", f"Question: {question}"]
+    # Source material comes from whichever specialist ran. The research agent
+    # writes a synthesis rather than raw passages — that is the point of the
+    # RLM, since its 52 passages must not all re-enter context here — so the
+    # response agent composes from the synthesis when one exists.
+    #
+    # Reading only evidence.md meant a completed investigation was silently
+    # discarded and the answer became "no evidence was provided".
+    research = (files.get("research.md") or "").strip()
+    evidence = (files.get("evidence.md") or "").strip()
+
+    if research:
+        source = (
+            "An investigation across many documents produced the synthesis below. "
+            "Its [chunk_id] citations refer to passages that were read. Base your "
+            "answer on it and preserve those citations exactly.\n\n" + research
+        )
+        if evidence:
+            source += "\n\n" + evidence
+    else:
+        source = evidence
+
+    prompt_parts = [evidence_preamble(), "", source, "", f"Question: {question}"]
     if repair_note:
         prompt_parts += ["", "Your previous draft had these problems:", repair_note]
     if state.get("degraded_retrieval"):
@@ -434,7 +455,23 @@ async def validator(state: AgentState, settings: Settings) -> dict[str, Any]:
 
     evidence = {r.chunk.chunk_id: r.chunk.text for r in state.get("retrieved", [])}
 
-    grounding = check_grounding(answer, retrieved_chunks=evidence)
+    # A research synthesis is an aggregate over many documents, so it is checked
+    # against the findings it was reduced from as well as the passages, and is
+    # not required to cite a passage per sentence. Fabricated citations and
+    # unsupported figures remain failures in both modes — see the rationale in
+    # app.security.grounding.check_grounding.
+    files = state.get("files", {})
+    is_synthesis = bool((files.get("research.md") or "").strip())
+    if is_synthesis:
+        for name, text in files.items():
+            if name.startswith("findings/"):
+                evidence[name] = text
+
+    grounding = check_grounding(
+        answer,
+        retrieved_chunks=evidence,
+        require_citation_per_claim=not is_synthesis,
+    )
     egress = scan_egress(answer, source_passages=evidence)
 
     passed = grounding.passed and not egress.must_block
